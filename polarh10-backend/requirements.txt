@@ -1,0 +1,7 @@
+# Django and REST Framework
+Django>=4.2,<5.0
+djangorestframework>=3.14,<4.0
+django-cors-headers>=4.3,<5.0
+
+# Google Cloud Pub/Sub
+google-cloud-pubsub>=2.18,<3.0

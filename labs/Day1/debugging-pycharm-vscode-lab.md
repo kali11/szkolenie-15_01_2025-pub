@@ -590,69 +590,57 @@ Use watch expressions to monitor specific values throughout debugging, and set c
 ### Overview
 Learn to debug applications running inside Docker containers, a crucial skill for debugging containerized and cloud-deployed applications.
 
-### Step-by-Step Instructions
+### 6.1 Debugging in VSCode (debugpy attach)
 
-1. **Review the existing Dockerfile:**
-   The project already has a Dockerfile. Let's create a debug-specific configuration.
+In this flow the **container exposes port 5678**, and **VSCode attaches** to it.
 
-2. **Create a debug-enabled Dockerfile:**
-   Create a new file `Dockerfile.debug` in the `polarh10-backend` folder:
-   
+1. **Create Docker debug files in `polarh10-backend/`:**
+
+   `Dockerfile.debugpy`
    ```dockerfile
-   FROM python:3.10-slim
+   FROM python:3.11-slim
    
    WORKDIR /app
    
-   # Install debugpy for remote debugging
-   RUN pip install debugpy
+   ENV PYTHONDONTWRITEBYTECODE=1 \
+       PYTHONUNBUFFERED=1 \
+       DJANGO_SETTINGS_MODULE=config.settings
    
-   # Copy requirements and install dependencies
    COPY requirements.txt .
-   RUN pip install --no-cache-dir -r requirements.txt
+   RUN pip install --no-cache-dir -r requirements.txt \
+       && pip install --no-cache-dir debugpy
    
-   # Copy application code
-   COPY . .
-   
-   # Expose both the application port and debug port
    EXPOSE 8000 5678
-   
-   # Start with debugpy waiting for connection
-   CMD ["python", "-m", "debugpy", "--listen", "0.0.0.0:5678", "manage.py", "runserver", "0.0.0.0:8000", "--noreload"]
    ```
 
-3. **Create a docker-compose.debug.yml:**
-   Create a new file `polarh10-backend/docker-compose.debug.yml`:
+   `docker-compose.debugpy.yml`
    ```yaml
-   version: '3.8'
-   
    services:
-     backend-debug:
+     backend-web:
        build:
          context: .
-         dockerfile: Dockerfile.debug
+         dockerfile: Dockerfile.debugpy
        ports:
          - "8000:8000"
          - "5678:5678"
        volumes:
          - .:/app
        environment:
-         - DJANGO_DEBUG=True
-         - DJANGO_ALLOWED_HOSTS=localhost,127.0.0.1
+         DJANGO_DEBUG: "True"
+         DJANGO_ALLOWED_HOSTS: "localhost,127.0.0.1"
+       command:
+         - sh
+         - -lc
+         - "python manage.py migrate --noinput && python -m debugpy --listen 0.0.0.0:5678 --wait-for-client manage.py runserver 0.0.0.0:8000 --noreload"
    ```
 
-4. **Build and run the debug container:**
-
-- Open Docker Desktop App.
-- Build container
+2. **Start the container:**
    ```bash
    cd polarh10-backend
-   docker-compose -f docker-compose.debug.yml build
-   docker-compose -f docker-compose.debug.yml up
+   docker compose -f docker-compose.debugpy.yml up --build
    ```
 
-5. **Configure VSCode for remote debugging:**
-   Add a new configuration to `.vscode/launch.json`:
-   
+3. **Configure VSCode attach (`.vscode/launch.json`):**
    ```json
    {
        "name": "Python: Remote Attach (Docker)",
@@ -672,51 +660,109 @@ Learn to debug applications running inside Docker containers, a crucial skill fo
    }
    ```
 
-6. **Configure PyCharm for remote debugging:**
-   - Go to Run → Edit Configurations
-   - Click "+" → Python Debug Server
+4. **Attach & test:**
+   - Start the attach config (F5)
+   - Add a breakpoint in `polarh10-backend/heartrate/views.py`
+   - Trigger it:
+     ```bash
+     curl http://localhost:8000/api/heartrate/stats/
+     ```
+
+
+### 6.2 Debugging in PyCharm (PyCharm Debug Server / reverse-connect)
+
+In this flow **PyCharm listens on port 5678**, and the **container connects to PyCharm** (no debug port is exposed from Docker).
+
+1. **Create Docker debug files in `polarh10-backend/`:**
+
+   `Dockerfile.debug`
+   ```dockerfile
+   FROM python:3.11-slim
+   
+   WORKDIR /app
+   
+   ENV PYTHONDONTWRITEBYTECODE=1 \
+       PYTHONUNBUFFERED=1 \
+       DJANGO_SETTINGS_MODULE=config.settings
+   
+   # IMPORTANT:
+   # Find correct version pydevd-pycharm to your IDE build (Help -> About -> "Build #...").
+   # If you install a mismatched version, you will see:
+   # "Warning: wrong debugger version. Use pycharm-debugger.egg ..."
+   ARG PYCHARM_BUILD=253.29346.308
+
+   COPY requirements.txt .
+   RUN pip install --no-cache-dir -r requirements.txt \
+       && pip install --no-cache-dir "pydevd-pycharm~=${PYCHARM_BUILD}"
+   
+   EXPOSE 8000
+   ```
+
+   `docker-compose.debug.yml`
+   ```yaml
+   services:
+     backend-web:
+       build:
+         context: .
+         dockerfile: Dockerfile.debug
+         args:
+           # Set this to your PyCharm build number (Help -> About -> "Build #...").
+           PYCHARM_BUILD: "253.29346.308"
+       ports:
+         - "8000:8000"
+       volumes:
+         - .:/app
+       environment:
+         DJANGO_DEBUG: "True"
+         DJANGO_ALLOWED_HOSTS: "localhost,127.0.0.1"
+       command:
+         - sh
+         - -lc
+         # Start PyCharm "Python Debug Server" on port 5678 BEFORE running this container.
+         - "python manage.py migrate --noinput && python -m pydevd_pycharm --client host.docker.internal --port 5678 --file manage.py runserver 0.0.0.0:8000 --noreload"
+   ```
+
+2. **Configure PyCharm Debug Server:**
+   - Run → Edit Configurations
+   - "+" → Python Debug Server
    - Configure:
      - Name: `Docker Remote Debug`
      - IDE host name: `localhost`
      - Port: `5678`
      - Path mappings: `$PROJECT_DIR$/polarh10-backend` → `/app`
 
-7. **Connect the debugger:**
-   
-   **In VSCode:**
-   - Select "Python: Remote Attach (Docker)" from the debug dropdown
-   - Press F5 to connect
-   - The container should now continue starting Django
-   
-   **In PyCharm:**
-   - Start the "Docker Remote Debug" configuration
-   - PyCharm connects to the waiting debugpy server
+3. **Start debugging:**
+   - Start the **PyCharm Debug Server** config (it should show "Waiting for process connection…")
+   - Start the container:
+     ```bash
+     cd polarh10-backend
+     docker compose -f docker-compose.debug.yml up --build
+     ```
 
-8. **Set breakpoints and debug:**
-   - Open `polarh10-backend/heartrate/views.py`
-   - Set a breakpoint in the `get_queryset` method
-   - Access the API:
-   ```bash
-   curl http://localhost:8000/api/heartrate/?minutes=5
-   ```
-   - The debugger should pause at your breakpoint
+4. **Set breakpoints & test:**
+   - Add a breakpoint in `polarh10-backend/heartrate/views.py`
+      - For example at line 
+         ```
+         queryset = self.get_queryset()
+         ```
+   - Trigger it:
+     ```bash
+     curl http://localhost:8000/api/heartrate/stats/
+     ```
 
-
-11. **Clean up:**
-    ```bash
-    # If you're still in polarh10-backend directory:
-    docker-compose -f docker-compose.debug.yml down
-    ```
+  **If your breakpoint is not being hit you may need to change Path mappings**: 
+  
+  Run → Edit Configurations of Docker Remote Debug
+  `$PROJECT_DIR$/polarh10-backend` → `/app`. You may see that there is some problem with it after adding new breakpoint and seeing docker logs. (like) Try adding full polarh10-backend path etc.
 
 
 ### Key Concepts
 
 - **Remote Debugging:** Connecting a debugger to a process running on a different machine or container
-- **debugpy:** Microsoft's Python debugger that supports remote debugging
 - **Path Mappings:** Maps local source paths to paths inside the container
-- **Port Exposure:** Debug port (5678) must be accessible from your IDE
 - **Volume Mounts:** Allow code changes without rebuilding the container
-- You can add **--wait-for-client** flag to Dockerfile to make the application wait for debugger connection before starting
+- **debugpy (VSCode)**: IDE attaches to port 5678 exposed by the container (use `docker-compose.debugpy.yml`)
+- **PyCharm Debug Server (PyCharm)**: PyCharm listens on port 5678 and the container connects to it (use `docker-compose.debug.yml`)
 
 ---
 

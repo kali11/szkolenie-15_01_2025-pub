@@ -13,6 +13,7 @@ Or with environment variables:
 import json
 import signal
 import sys
+import logging
 from django.core.management.base import BaseCommand, CommandError
 from django.conf import settings
 from django.utils import timezone
@@ -25,6 +26,7 @@ try:
 except ImportError:
     PUBSUB_AVAILABLE = False
 
+logger = logging.getLogger(__name__)
 
 class Command(BaseCommand):
     help = 'Subscribe to Google Cloud Pub/Sub and save heart rate data to database'
@@ -203,6 +205,13 @@ class Command(BaseCommand):
                 f'Saved: {reading.bpm} BPM, RR: {reading.rr_interval}ms '
                 f'(ID: {reading.id})'
             )
+            logger.debug({
+                'message': 'HR data',
+                'type': 'HR',
+                'timestamp': sensor_timestamp,
+                'bpm': bpm,
+                'rr_interval': rr_interval
+            })
 
             # Acknowledge the message
             message.ack()

@@ -1,0 +1,5 @@
+project_id             = "ws-kontakt"
+region                 = "europe-west1"
+cloud_run_service_name = "nginx-service-lab1"
+topic_name             = "lab1-topic"
+subscription_name      = "lab1-subscription"
